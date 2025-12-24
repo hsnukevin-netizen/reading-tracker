@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>雲端同步讀書進度 v3.0</title>
+    <title>雲端讀書管家 v3.1 (可編輯版)</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <style>
@@ -72,22 +72,22 @@
                         </div>
                         <div class="col-md-6">
                             <label class="form-label">進度類型</label>
-                            <select class="form-select" id="typeSelect" onchange="toggleTypeInput()">
+                            <select class="form-select" id="typeSelect" onchange="toggleTypeInput('add')">
                                 <option value="numeric">🔢 數字計數 (頁數/集數)</option>
                                 <option value="milestone">📝 自訂清單 (章節名/穴位名)</option>
                             </select>
                         </div>
 
-                        <div class="col-md-4 type-numeric">
+                        <div class="col-md-4 type-numeric-add">
                             <label class="form-label">總數量</label>
                             <input type="number" class="form-control" id="totalNum" placeholder="300">
                         </div>
-                        <div class="col-md-2 type-numeric">
+                        <div class="col-md-2 type-numeric-add">
                             <label class="form-label">單位</label>
                             <input type="text" class="form-control" id="unit" value="頁">
                         </div>
 
-                        <div class="col-12 type-milestone" style="display:none;">
+                        <div class="col-12 type-milestone-add" style="display:none;">
                             <label class="form-label">輸入進度列表 (一行一個)</label>
                             <textarea class="form-control" id="milestoneList" rows="3" placeholder="手太陰肺經&#10;手陽明大腸經1~5穴&#10;手陽明大腸經6~10穴"></textarea>
                             <div class="form-text">請按 Enter 換行來區分每個進度點。</div>
@@ -137,37 +137,86 @@
     </div>
 </div>
 
+<div class="modal fade" id="editModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-light">
+                <h5 class="modal-title"><i class="fas fa-edit"></i> 編輯項目</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="editForm">
+                    <input type="hidden" id="editId">
+                    <div class="mb-3">
+                        <label class="form-label">項目名稱</label>
+                        <input type="text" class="form-control" id="editTitle" required>
+                    </div>
+                    
+                    <div id="editNumericArea" class="row g-3 mb-3">
+                        <div class="col-8">
+                            <label class="form-label">總數量 (更改不會影響目前進度)</label>
+                            <input type="number" class="form-control" id="editTotal">
+                        </div>
+                        <div class="col-4">
+                            <label class="form-label">單位</label>
+                            <input type="text" class="form-control" id="editUnit">
+                        </div>
+                    </div>
+
+                    <div id="editMilestoneArea" class="mb-3" style="display:none;">
+                        <label class="form-label">進度清單 (可修改內容，順序對應進度)</label>
+                        <textarea class="form-control" id="editMilestoneList" rows="5"></textarea>
+                    </div>
+
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label">標籤</label>
+                            <input type="text" class="form-control" id="editTags">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">預計完成日</label>
+                            <input type="date" class="form-control" id="editTargetDate">
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" onclick="saveEdit()">儲存修改</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 <script>
     // ==========================================
-    // ⚠️ 設定區：請將下方引號內換成您的 Google Apps Script 網址
+    // ⚠️ 請填入您的 Google Apps Script 網址
     const API_URL = "https://script.google.com/macros/s/AKfycbza6JC8hrPf2t2csUUJMCdFTEWHC6yurinD1Rdm-W1qZUgXlasiztdiHM38PfMU9koB/exec"; 
     // ==========================================
 
     let books = [];
     let currentFilter = 'all';
 
-    // 啟動時先從雲端讀取資料
     document.addEventListener('DOMContentLoaded', () => {
         if(API_URL.includes("您的_GOOGLE")) {
-            alert("請先打開 HTML 檔案，將 API_URL 替換成您的 Google Apps Script 網址！");
+            alert("請先修改程式碼中的 API_URL！");
             document.getElementById('loadingOverlay').style.display = 'none';
         } else {
             loadFromCloud();
         }
     });
 
-    // --- 雲端同步核心功能 ---
-    
-    // 讀取資料
+    // --- 雲端同步核心 ---
     function loadFromCloud() {
         showLoading(true);
         updateStatus("正在下載最新進度...");
-        
         fetch(API_URL)
             .then(response => response.json())
             .then(data => {
                 books = data;
+                // 資料修正：確保每本書都有 unit 欄位
+                books.forEach(b => { if(!b.unit) b.unit = ''; });
                 renderBooks();
                 renderTags();
                 renderHeatmap();
@@ -176,57 +225,43 @@
             })
             .catch(error => {
                 console.error('Error:', error);
-                updateStatus("❌ 連線失敗，請檢查網路");
+                updateStatus("❌ 連線失敗");
                 showLoading(false);
-                alert("無法連線到 Google 試算表，請檢查網址是否正確或網路狀態。");
+                alert("無法連線，請檢查網路或網址。");
             });
     }
 
-    // 上傳資料
     function saveToCloud() {
         updateStatus("正在儲存至雲端...");
-        // 為了讓使用者感覺反應快，我們先渲染介面，背景再默默上傳
         renderBooks();
         renderTags();
         renderHeatmap();
-
         fetch(API_URL, {
             method: 'POST',
             body: JSON.stringify(books)
         })
         .then(response => response.json())
         .then(result => {
-            if(result.result === 'success') {
-                updateStatus("✅ 儲存成功 " + new Date().toLocaleTimeString());
-            } else {
-                updateStatus("❌ 儲存失敗");
-            }
+            if(result.result === 'success') updateStatus("✅ 儲存成功 " + new Date().toLocaleTimeString());
+            else updateStatus("❌ 儲存失敗");
         })
-        .catch(error => {
-            updateStatus("❌ 上傳失敗，請稍後重試");
-        });
+        .catch(error => updateStatus("❌ 上傳失敗"));
     }
 
-    function forceSync() {
-        loadFromCloud();
+    function forceSync() { loadFromCloud(); }
+    function showLoading(show) { document.getElementById('loadingOverlay').style.display = show ? 'flex' : 'none'; }
+    function updateStatus(msg) { document.getElementById('syncStatus').innerText = msg; }
+
+    // --- UI 邏輯 ---
+    function toggleTypeInput(mode) {
+        if(mode === 'add') {
+            const type = document.getElementById('typeSelect').value;
+            document.querySelectorAll('.type-numeric-add').forEach(el => el.style.display = type === 'numeric' ? 'block' : 'none');
+            document.querySelectorAll('.type-milestone-add').forEach(el => el.style.display = type === 'milestone' ? 'block' : 'none');
+        }
     }
 
-    function showLoading(show) {
-        document.getElementById('loadingOverlay').style.display = show ? 'flex' : 'none';
-    }
-
-    function updateStatus(msg) {
-        document.getElementById('syncStatus').innerText = msg;
-    }
-
-    // --- 以下為 UI 邏輯 (與舊版類似) ---
-
-    function toggleTypeInput() {
-        const type = document.getElementById('typeSelect').value;
-        document.querySelectorAll('.type-numeric').forEach(el => el.style.display = type === 'numeric' ? 'block' : 'none');
-        document.querySelectorAll('.type-milestone').forEach(el => el.style.display = type === 'milestone' ? 'block' : 'none');
-    }
-
+    // 新增
     document.getElementById('addForm').addEventListener('submit', function(e) {
         e.preventDefault();
         const type = document.getElementById('typeSelect').value;
@@ -248,7 +283,7 @@
 
         if (type === 'numeric') {
             newBook.total = parseInt(document.getElementById('totalNum').value);
-            newBook.unit = document.getElementById('unit').value;
+            newBook.unit = document.getElementById('unit').value || '頁';
             newBook.milestones = [];
         } else {
             const lines = document.getElementById('milestoneList').value.split('\n').map(l=>l.trim()).filter(l=>l);
@@ -260,12 +295,13 @@
         if(newBook.total === 0) { alert('總數量不能為 0'); return; }
 
         books.push(newBook);
-        saveToCloud(); // 改為儲存到雲端
+        saveToCloud();
         this.reset();
         document.getElementById('typeSelect').value = 'numeric';
-        toggleTypeInput();
+        toggleTypeInput('add');
     });
 
+    // 渲染書籍列表 (已修正：顯示單位)
     function renderBooks() {
         const list = document.getElementById('bookList');
         list.innerHTML = '';
@@ -296,12 +332,12 @@
             }
 
             let progressText = '';
+            // 【修正 1】這裡增加顯示單位的邏輯
             if (book.type === 'numeric') {
-                progressText = `${book.current} / ${book.total} ${book.unit}`;
+                progressText = `<span class="fw-bold">${book.current}</span> / ${book.total} ${book.unit}`;
             } else {
                 const currentStageName = book.current < book.total ? book.milestones[book.current] : "🎉 全數完成";
-                const nextStageName = (book.current + 1 < book.total) ? book.milestones[book.current+1] : "";
-                progressText = `<span class="fw-bold text-primary">${currentStageName}</span> <br><small class="text-muted" style="font-size:0.8em">${nextStageName ? '下個: '+nextStageName : ''}</small>`;
+                progressText = `<span class="fw-bold text-primary">${currentStageName}</span>`;
             }
 
             const tagsHtml = book.tags.map(t => `<span class="badge bg-secondary tag-badge">${t}</span>`).join('');
@@ -315,20 +351,23 @@
                                 <div class="dropdown">
                                     <button class="btn btn-link text-secondary p-0" data-bs-toggle="dropdown"><i class="fas fa-ellipsis-v"></i></button>
                                     <ul class="dropdown-menu">
+                                        <li><a class="dropdown-item" href="#" onclick="openEditModal(${book.id})"><i class="fas fa-edit me-2"></i>編輯項目</a></li>
                                         <li><a class="dropdown-item" href="#" onclick="toggleRotation(${book.id})">${book.inRotation ? '⛔ 暫停抽選' : '✅ 加入抽選'}</a></li>
-                                        <li><a class="dropdown-item text-danger" href="#" onclick="deleteBook(${book.id})">刪除</a></li>
+                                        <li><hr class="dropdown-divider"></li>
+                                        <li><a class="dropdown-item text-danger" href="#" onclick="deleteBook(${book.id})"><i class="fas fa-trash-alt me-2"></i>刪除</a></li>
                                     </ul>
                                 </div>
                             </div>
                             <div class="mb-2">${tagsHtml}</div>
                             
+                            <div class="d-flex justify-content-between small text-muted mb-1">
+                                <span>${percent}% (${progressText})</span> 
+                            </div>
+
                             <div class="progress mb-2" style="height: 8px;">
                                 <div class="progress-bar ${isDone ? 'bg-success' : 'bg-primary'}" role="progressbar" style="width: ${percent}%"></div>
                             </div>
-                            <div class="d-flex justify-content-between small text-muted mb-2">
-                                <span>${percent}%</span>
-                                <span>${pacingMsg}</span>
-                            </div>
+                            <div class="text-end mb-2">${pacingMsg}</div>
 
                             <div class="bg-light p-2 rounded mb-2 text-center">
                                 ${book.type === 'numeric' ? `
@@ -341,7 +380,9 @@
                                 ` : `
                                     <div class="d-flex justify-content-between align-items-center">
                                         <button class="btn btn-sm btn-outline-secondary" onclick="updateProgress(${book.id}, -1)" ${book.current===0?'disabled':''}><i class="fas fa-arrow-left"></i></button>
-                                        <div class="flex-grow-1 px-2 small text-truncate text-center">${progressText}</div>
+                                        <div class="flex-grow-1 px-2 small text-truncate text-center text-muted">
+                                            ${book.current + 1 < book.total ? '下個: '+book.milestones[book.current+1] : ''}
+                                        </div>
                                         <button class="btn btn-sm btn-outline-primary" onclick="updateProgress(${book.id}, 1)" ${isDone?'disabled':''}><i class="fas fa-check"></i></button>
                                     </div>
                                 `}
@@ -361,10 +402,65 @@
         });
     }
 
+    // --- 編輯功能邏輯 (新增) ---
+    const editModal = new bootstrap.Modal(document.getElementById('editModal'));
+
+    function openEditModal(id) {
+        const book = books.find(b => b.id === id);
+        if(!book) return;
+
+        document.getElementById('editId').value = book.id;
+        document.getElementById('editTitle').value = book.title;
+        document.getElementById('editTags').value = book.tags.join(', ');
+        document.getElementById('editTargetDate').value = book.targetDate;
+
+        const numArea = document.getElementById('editNumericArea');
+        const mileArea = document.getElementById('editMilestoneArea');
+
+        if(book.type === 'numeric') {
+            numArea.style.display = 'flex';
+            mileArea.style.display = 'none';
+            document.getElementById('editTotal').value = book.total;
+            document.getElementById('editUnit').value = book.unit;
+        } else {
+            numArea.style.display = 'none';
+            mileArea.style.display = 'block';
+            document.getElementById('editMilestoneList').value = book.milestones.join('\n');
+        }
+
+        editModal.show();
+    }
+
+    function saveEdit() {
+        const id = parseInt(document.getElementById('editId').value);
+        const book = books.find(b => b.id === id);
+        if(!book) return;
+
+        book.title = document.getElementById('editTitle').value;
+        const tagsVal = document.getElementById('editTags').value;
+        book.tags = tagsVal ? tagsVal.split(/[,，]/).map(t=>t.trim()).filter(t=>t) : [];
+        book.targetDate = document.getElementById('editTargetDate').value;
+
+        if(book.type === 'numeric') {
+            const newTotal = parseInt(document.getElementById('editTotal').value);
+            if(newTotal > 0) book.total = newTotal;
+            book.unit = document.getElementById('editUnit').value;
+        } else {
+            const lines = document.getElementById('editMilestoneList').value.split('\n').map(l=>l.trim()).filter(l=>l);
+            if(lines.length > 0) {
+                book.milestones = lines;
+                book.total = lines.length;
+            }
+        }
+
+        editModal.hide();
+        saveToCloud(); // 儲存並同步
+    }
+
+    // --- 其他功能 (不變) ---
     function updateProgress(id, change) {
         const book = books.find(b => b.id === id);
         if (!book) return;
-
         let newVal = parseInt(book.current) + parseInt(change);
         if (newVal < 0) newVal = 0;
         if (newVal > book.total) newVal = book.total;
@@ -374,58 +470,30 @@
             if (!book.logs) book.logs = [];
             if (!book.logs.includes(todayStr)) book.logs.push(todayStr);
         }
-
         book.current = newVal;
-        
         if (book.current >= book.total && book.inRotation) {
-            if(confirm(`恭喜完成「${book.title}」！\n要將其從抽選清單中移除嗎？`)) {
-                book.inRotation = false;
-            }
+            if(confirm(`恭喜完成「${book.title}」！\n要將其從抽選清單中移除嗎？`)) book.inRotation = false;
         }
-        
-        saveToCloud(); // 觸發雲端儲存
+        saveToCloud();
     }
 
     function saveNote(id, text) {
         const book = books.find(b => b.id === id);
-        if(book) {
-            book.notes = text;
-            saveToCloud(); // 觸發雲端儲存
-        }
+        if(book) { book.notes = text; saveToCloud(); }
     }
-
-    function toggleNotes(id) {
-        const el = document.getElementById(`note-${id}`);
-        el.style.display = el.style.display === 'block' ? 'none' : 'block';
-    }
-
-    function toggleRotation(id) {
-        const book = books.find(b => b.id === id);
-        if(book) { book.inRotation = !book.inRotation; saveToCloud(); }
-    }
-
-    function deleteBook(id) {
-        if(confirm('確定刪除？這會同步刪除雲端資料。')) {
-            books = books.filter(b => b.id !== id);
-            saveToCloud();
-        }
-    }
-
+    function toggleNotes(id) { const el = document.getElementById(`note-${id}`); el.style.display = el.style.display === 'block' ? 'none' : 'block'; }
+    function toggleRotation(id) { const book = books.find(b => b.id === id); if(book) { book.inRotation = !book.inRotation; saveToCloud(); } }
+    function deleteBook(id) { if(confirm('確定刪除？這會同步刪除雲端資料。')) { books = books.filter(b => b.id !== id); saveToCloud(); } }
+    
     function renderTags() {
         const allTags = new Set();
         books.forEach(b => { if(b.tags) b.tags.forEach(t => allTags.add(t)); });
         const container = document.getElementById('tagFilters');
         container.innerHTML = '';
-        allTags.forEach(tag => {
-            container.innerHTML += `<button class="btn btn-sm btn-outline-secondary rounded-pill me-1" onclick="filterBooks('${tag}')">#${tag}</button>`;
-        });
+        allTags.forEach(tag => { container.innerHTML += `<button class="btn btn-sm btn-outline-secondary rounded-pill me-1" onclick="filterBooks('${tag}')">#${tag}</button>`; });
     }
-
-    function filterBooks(tag) {
-        currentFilter = tag;
-        renderBooks();
-    }
-
+    function filterBooks(tag) { currentFilter = tag; renderBooks(); }
+    
     function renderHeatmap() {
         const container = document.getElementById('heatmapContainer');
         container.innerHTML = '';
@@ -441,23 +509,17 @@
             container.appendChild(div);
         }
     }
-
     function pickRandomBook() {
         const pool = books.filter(b => b.inRotation && b.current < b.total);
         if (pool.length === 0) { alert('沒有可抽選的書籍！'); return; }
         const picked = pool[Math.floor(Math.random() * pool.length)];
         document.getElementById('pickedTitle').innerText = picked.title;
-        
         let progressInfo = '';
-        if (picked.type === 'numeric') {
-            progressInfo = `目前進度：${picked.current} / ${picked.total} ${picked.unit}`;
-        } else {
-            progressInfo = `目前進度：${picked.milestones[picked.current] || '準備開始'}`;
-        }
+        if (picked.type === 'numeric') progressInfo = `目前進度：${picked.current} / ${picked.total} ${picked.unit}`;
+        else progressInfo = `目前進度：${picked.milestones[picked.current] || '準備開始'}`;
         document.getElementById('pickedProgress').innerHTML = progressInfo;
         new bootstrap.Modal(document.getElementById('resultModal')).show();
     }
 </script>
-
 </body>
 </html>
